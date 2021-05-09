@@ -1,4 +1,5 @@
 # reguleque-search
+Scripts for tidying and indexing documents for [Reguleque](https://reguleque.cl), a search engine for public worker transparency records from the Chilean government.
 
 ## Setup
 
