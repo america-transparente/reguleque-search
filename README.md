@@ -1,6 +1,6 @@
 # reguleque-search
 
-# Setup
+## Setup
 
 
 Start the TypeSense server with:
