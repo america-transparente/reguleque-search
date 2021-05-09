@@ -1,6 +1,6 @@
 [tool.poetry]
 authors = ["Agustín Covarrubias <agucova@uc.cl>"]
-description = ""
+description = "Scripts for tidying and indexing documents for Reguleque, a search engine for public worker transparency records from the Chilean government."
 name = "reguleque-search"
 version = "0.1.0"
 
