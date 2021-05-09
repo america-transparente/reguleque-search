@@ -2,14 +2,18 @@
 
 ## Setup
 
-
-Start the TypeSense server with:
+You should [install Typesense](https://typesense.org/docs/0.20.0/guide/install-typesense.html#%F0%9F%93%A5-download-install) and [Poetry](https://python-poetry.org/docs/#installation), and then to install the requirements use:
+```shell
+poetry install
+```
+T
+Start a [Typesense](https://typesense.org/) server with:
 
 ```shell
 typesense-server --data-dir=data/out/ --api-key=<ADMIN-API-KEY>
 ```
 
-And then load and index the revenue entries on the running instance (samples provided in `data/in`):
+And then load and index the revenue entries on the running instance using the samples provided in `data/in`:
 
 ```shell
 python3 reguleque_search/main.py
