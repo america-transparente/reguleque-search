@@ -4,8 +4,8 @@ import typesense as ts
 
 client = ts.Client(
     {
-        "api_key": "xd",
-        "nodes": [{"host": "localhost", "port": "8108", "protocol": "http"}],
+        "api_key": os.getenv("TYPESENSE_API_KEY") or input("TypeSense Admin API Key:"),
+        "nodes": [{"host": "typesense-lb-bfa09c7-516922950.sa-east-1.elb.amazonaws.com", "port": "80", "protocol": "http"}],
     }
 )
 
@@ -48,7 +48,7 @@ COLUMN_TYPES = {
     "nombre_organismo": str,
     "código_organismo": str,
     "fecha_publicación": str,
-    "año": float,
+    "año": str,
     "mes": str,
     "tipo_estamento": str,
     "nombre": str,
@@ -80,7 +80,7 @@ REVENUE_SCHEMA = {
         {"name": "nombre_organismo", "type": "string", "facet": True},
         {"name": "código_organismo", "type": "string"},
         {"name": "fecha_publicación", "type": "string"},
-        {"name": "año", "type": "int32", "facet": True},
+        {"name": "año", "type": "string", "facet": True},
         {"name": "mes", "type": "string"},
         {"name": "tipo_estamento", "type": "string", "facet": True},
         {"name": "nombre", "type": "string"},
@@ -135,7 +135,7 @@ for filepath in filepaths:
             .dropna(axis=0, how="all")
             .fillna("")
         )
-        entries["año"] = entries["año"].apply(lambda x: int(x) if x == x else "")
+        # entries["año"] = entries["año"].apply(lambda x: int(x) if x == x else "")
         entries = entries.to_dict(orient="records")
 
     print(entries[0])
