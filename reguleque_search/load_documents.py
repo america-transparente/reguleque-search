@@ -1,5 +1,6 @@
 import os
 from typing import List
+from art import tprint
 import typesense as ts
 import pandas as pd
 import dask
@@ -106,6 +107,8 @@ REVENUE_SCHEMA = {
 
 LOG_INFO = typer.style("[INFO]", fg=typer.colors.GREEN, bold=True)
 LOG_WARN = typer.style("[WARN]", fg=typer.colors.BRIGHT_YELLOW, bold=True)
+LOG_ERR = typer.style("[ERR]", fg=typer.colors.RED, bold=True)
+LOG_PROMPT = typer.style("[PROMPT]", fg=typer.colors.WHITE, bold=True)
 
 
 @dask.delayed
@@ -139,12 +142,17 @@ def import_entries(
     entries: List[dict], filepath: Path, tsClient, action: str = "upsert"
 ) -> List[str]:
     generic_success = '"{"success":true}"'
-    api_responses = [
-        response.replace("\\", "")
-        for response in tsClient.collections[collection_name].documents.import_(
-            entries, {"action": action}
+    try:
+        api_responses = [
+            response.replace("\\", "")
+            for response in tsClient.collections[collection_name].documents.import_(
+                entries, {"action": action}
+            )
+        ]
+    except ts.exceptions.RequestUnauthorized:
+        typer.echo(
+            "\n" + LOG_ERR + " Invalid API key or insufficient permissions.", err=True
         )
-    ]
     errors = [response for response in api_responses if response != generic_success]
     if len(errors) / len(api_responses) > warn_error_tolerance:
         typer.echo(
@@ -159,58 +167,81 @@ def import_entries(
 
 def main(
     endpoint: str = endpoint,
+    port: int = 443,
+    protocol: str = "https",
     collection_name: str = collection_name,
     in_path: Path = in_path,
+    api_key: str = os.getenv("TYPESENSE_API_KEY"),
+    drop: bool = False,
 ):
-    daskClient = Client()
-    typer.echo(
-        LOG_INFO + f" Started cluster, you can monitor at {daskClient.dashboard_link}"
-    )
+    tprint("Reguleque")
     tsClient = ts.Client(
         {
-            "api_key": os.getenv("TYPESENSE_API_KEY")
-            or input("TypeSense Admin API Key: "),
+            "api_key": api_key
+            or typer.prompt(LOG_PROMPT + " Typesense Admin API Key", type=str),
             "nodes": [
                 {
                     "host": os.getenv("TYPESENSE_HOST") or endpoint,
-                    "port": "443",
-                    "protocol": "https",
+                    "port": port,
+                    "protocol": protocol,
                 }
             ],
         }
     )
-    typer.echo(LOG_INFO + f" Connected to Typesense at {endpoint}.")
+    typer.echo(LOG_INFO + f" Connected to Typesense at {protocol}://{endpoint}:{port}")
+
+    daskClient = Client()
+    typer.echo(
+        LOG_INFO + f" Started cluster, you can monitor at {daskClient.dashboard_link}"
+    )
 
     # List all the files that need loading
     filepaths = list(in_path.rglob("**/*.csv"))
-    print(list(map(str, filepaths)))
     typer.secho(LOG_INFO + f" Found {len(filepaths)} files to load.")
 
-    # Drop pre-existing collection if any
     try:
-        tsClient.collections[collection_name].delete()
-    except Exception:
-        pass
+        # Drop pre-existing collection if any
+        if drop:
+            confirm_drop = typer.confirm(
+                LOG_WARN
+                + " Are you sure you want to delete all documents in the cluster and recreate the schema?"
+            )
+            if not confirm_drop:
+                typer.echo(LOG_ERR + " Canceling execution.", err=True)
+                raise typer.Abort()
+            typer.echo(
+                LOG_WARN
+                + " Drop mode has been enabled, dropping all documents and recreating schema...",
+                err=True,
+            )
+            try:
+                tsClient.collections[collection_name].delete()
+            except Exception:
+                pass
+            # Create collection with the manual schema
+            tsClient.collections.create(REVENUE_SCHEMA)
+            typer.secho(LOG_INFO + " Created new schema.")
 
-    # Create collection with the manual schema
-    tsClient.collections.create(REVENUE_SCHEMA)
-    typer.secho(LOG_INFO + " Created schema.")
+        # Load all files
+        typer.secho(LOG_INFO + " Processing and uploading documents...")
+        responses: List[List[str]] = []
+        for filepath in filepaths:
+            entries: List[dict] = process_file(filepath)
+            response: List[str] = import_entries(entries, filepath, tsClient)
+            responses.append(response)
 
-    # Load all files
-    typer.secho(LOG_INFO + " Processing and uploading documents...")
-    responses: List[List[str]] = []
-    for filepath in filepaths:
-        entries: List[dict] = process_file(filepath)
-        response: List[str] = import_entries(entries, filepath, tsClient)
-        responses.append(response)
-
-    responses = daskClient.persist(responses)
-    progress(responses)
-    responses = daskClient.gather(responses)
-    sleep(2)
-    typer.secho(
-        "\n" + LOG_INFO + f" Finished processing and uploading {len(filepaths)} documents."
-    )
+        responses = daskClient.persist(responses)
+        progress(responses)
+        responses = daskClient.gather(responses)
+        sleep(2)
+        typer.secho(
+            "\n"
+            + LOG_INFO
+            + f" Finished processing and uploading {len(filepaths)} documents."
+        )
+    except ts.exceptions.RequestUnauthorized:
+        typer.echo(LOG_ERR + " Invalid API key or insufficient permissions.", err=True)
+        raise typer.Abort()
 
 
 if __name__ == "__main__":
