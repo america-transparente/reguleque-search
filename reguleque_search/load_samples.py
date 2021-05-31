@@ -4,8 +4,8 @@ import typesense as ts
 
 client = ts.Client(
     {
-        "api_key": os.getenv("TYPESENSE_API_KEY") or input("TypeSense Admin API Key:"),
-        "nodes": [{"host": "typesense-lb-bfa09c7-516922950.sa-east-1.elb.amazonaws.com", "port": "80", "protocol": "http"}],
+        "api_key": os.getenv("TYPESENSE_API_KEY") or input("TypeSense Admin API Key: "),
+        "nodes": [{"host": os.getenv("TYPESENSE_HOST") or "api.reguleque.cll", "port": "443", "protocol": "https"}],
     }
 )
 
@@ -142,5 +142,4 @@ for filepath in filepaths:
     for entry in entries:
         client.collections["revenue_entry"].documents.create(entry)
 
-    print(len(entries))
     # client.collections["revenue_entry"].documents.import_(entries, {'action': 'create'})
