@@ -32,7 +32,7 @@ By default, the script will not modify existing documents or the collection sche
 > **Warning:** This will delete all the documents in the Typesense collection.
 
 ```shell
-python3 reguleque_search/load_documents.py
+python3 reguleque_search/load_documents.py --drop
 ```
 
 ## Local testing
