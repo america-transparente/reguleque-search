@@ -6,12 +6,16 @@ version = "0.1.0"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-pandas = "^1.2.4"
 typesense = "^0.11.0"
+bokeh = "^2.3.2"
+dask = {extras = ["distributed", "dataframe"], version = "^2021.5.1"}
+typer = "^0.3.2"
+colorama = "^0.4.4"
 
 [tool.poetry.dev-dependencies]
 black = "^21.4b2"
 flake8 = "^3.9.1"
+graphviz = "^0.16"
 
 [build-system]
 build-backend = "poetry.masonry.api"

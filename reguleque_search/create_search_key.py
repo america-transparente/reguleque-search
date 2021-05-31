@@ -8,8 +8,13 @@ client = ts.Client(
     }
 )
 
-print("=>  Generated Search-only API Key:", client.keys.create({
-  "description": "Search-only reguleque key.",
-  "actions": ["documents:search"],
-  "collections": ["revenue_entry"]
-})["value"])
+print(
+    "=>  Generated Search-only API Key:",
+    client.keys.create(
+        {
+            "description": "Search-only reguleque key.",
+            "actions": ["documents:search"],
+            "collections": ["revenue_entry"],
+        }
+    )["value"],
+)
