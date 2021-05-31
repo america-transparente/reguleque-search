@@ -153,6 +153,7 @@ def import_entries(
         typer.echo(
             "\n" + LOG_ERR + " Invalid API key or insufficient permissions.", err=True
         )
+        raise typer.Abort()
     errors = [response for response in api_responses if response != generic_success]
     if len(errors) / len(api_responses) > warn_error_tolerance:
         typer.echo(
