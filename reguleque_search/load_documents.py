@@ -25,7 +25,6 @@ COLUMNS = [
     "mes",
     "tipo_estamento",
     "nombre",
-    "grado_eus",
     "tipo_calificación_profesional",
     "tipo_cargo",
     "región",
@@ -46,7 +45,6 @@ COLUMNS = [
 COLUMN_TYPES = {
     "id": str,
     "tipo_contrato": str,
-    "path": str,
     "nombre_organismo": str,
     "código_organismo": str,
     "fecha_publicación": str,
@@ -54,7 +52,6 @@ COLUMN_TYPES = {
     "mes": str,
     "tipo_estamento": str,
     "nombre": str,
-    "grado_eus": "Int64",
     "tipo_calificación_profesional": str,
     "tipo_cargo": str,
     "región": str,
@@ -78,14 +75,12 @@ REVENUE_SCHEMA = {
         {"name": "id", "type": "string"},
         {"name": "nombre", "type": "string"},
         {"name": "tipo_contrato", "type": "string", "facet": True},
-        {"name": "path", "type": "string"},
         {"name": "nombre_organismo", "type": "string", "facet": True},
         {"name": "código_organismo", "type": "string"},
         {"name": "fecha_publicación", "type": "string"},
         {"name": "año", "type": "string", "facet": True},
         {"name": "mes", "type": "string", "facet": True},
         {"name": "tipo_estamento", "type": "string", "facet": True},
-        {"name": "grado_eus", "type": "int32", "facet": True},
         {"name": "tipo_cargo", "type": "string"},
         {"name": "tipo_calificación_profesional", "type": "string"},
         {"name": "región", "type": "string", "facet": True},
@@ -132,14 +127,14 @@ def process_file(filepath: Path) -> List[dict]:
             .fillna("")
         )
     # Needed to transform from Int64 (pandas) to native int for     JSON serialization. Int64 was needed to allow NAs
-    entries["grado_eus"] = entries["grado_eus"].astype(int)
+    # entries["grado_eus"] = entries["grado_eus"].astype(int)
     entries = entries.to_dict(orient="records")
     return entries
 
 
 @dask.delayed
 def import_entries(
-    entries: List[dict], filepath: Path, tsClient, action: str = "upsert"
+    entries: List[dict], filepath: Path, tsClient, action: str = "create"
 ) -> List[str]:
     generic_success = '"{"success":true}"'
     try:
