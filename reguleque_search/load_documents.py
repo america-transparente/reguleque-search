@@ -1,13 +1,15 @@
 import os
-from typing import List
-from art import tprint
-import typesense as ts
-import pandas as pd
-import dask
-from dask.distributed import Client, progress
 from pathlib import Path
-import typer
 from time import sleep
+from typing import List
+
+import requests
+import typer
+import typesense as ts
+from art import tprint
+from dask import dataframe as dd
+from dask.distributed import Client, progress
+from tenacity import retry, wait_fixed, stop_after_attempt, retry_if_exception_type
 
 endpoint = "api.reguleque.cl"
 collection_name = "revenue_entry"
@@ -106,36 +108,78 @@ LOG_ERR = typer.style("[ERR]", fg=typer.colors.RED, bold=True)
 LOG_PROMPT = typer.style("[PROMPT]", fg=typer.colors.WHITE, bold=True)
 
 
-@dask.delayed
-def process_file(filepath: Path) -> List[dict]:
-    with open(filepath, "r", encoding="ISO-8859-1") as f:
-        entries = (
-            pd.read_csv(
-                f,
-                sep=";",
-                names=COLUMNS,
-                dtype=COLUMN_TYPES,
-                header=None,
-                skip_blank_lines=True,
-                na_filter=True,
-                na_values="Indefinido",
-                dayfirst=True,
-                encoding="ISO-8859-1",
-                index_col="id",
-            )
-            .dropna(axis=0, how="all")
-            .fillna("")
+# @dask.delayed
+def load_file(filepath: Path) -> dd.DataFrame:
+    entries = (
+        dd.read_csv(
+            filepath,
+            sep=";",
+            names=COLUMNS,
+            dtype=COLUMN_TYPES,
+            header=None,
+            skip_blank_lines=True,
+            na_filter=True,
+            na_values="Indefinido",
+            # dayfirst=True,
+            encoding="ISO-8859-1",
+            # index_col="id",
         )
+        .dropna(how="all")
+        .fillna("")
+    )
+    return entries
+
+def retry(times, exceptions):
+    """
+    Retry Decorator
+    Retries the wrapped function/method `times` times if the exceptions listed
+    in ``exceptions`` are thrown
+    :param times: The number of times to repeat the wrapped function/method
+    :type times: Int
+    :param Exceptions: Lists of exceptions that trigger a retry attempt
+    :type Exceptions: Tuple of Exceptions
+    """
+    def decorator(func):
+        def newfn(*args, **kwargs):
+            attempt = 0
+            while attempt < times:
+                try:
+                    return func(*args, **kwargs)
+                except:
+                    print(
+                        'Exception thrown when attempting to run %s, attempt '
+                        '%d of %d' % (func, attempt, times)
+                    )
+                    sleep(10)
+                    attempt += 1
+            return func(*args, **kwargs)
+        return newfn
+    return decorator
+
+
+# @retry(
+#     wait=wait_fixed(15),
+#     stop=stop_after_attempt(4),
+#     # retry=retry_if_exception_type(requests.exceptions.ConnectionError),
+# )
+@retry(times=4, exceptions=(requests.exceptions.ConnectionError))
+def upload_entries(entries, tsClient, action) -> List[str]:
+    return [
+        response.replace("\\", "")
+        for response in tsClient.collections[collection_name].documents.import_(
+            entries, {"action": action}
+        )
+    ]
+
+
+# @dask.delayed
+def import_entries(
+    entries: dd.DataFrame, filepath: Path, tsClient, action: str = "create"
+) -> List[str]:
     # Needed to transform from Int64 (pandas) to native int for     JSON serialization. Int64 was needed to allow NAs
     # entries["grado_eus"] = entries["grado_eus"].astype(int)
     entries = entries.to_dict(orient="records")
-    return entries
-
-
-@dask.delayed
-def import_entries(
-    entries: List[dict], filepath: Path, tsClient, action: str = "create"
-) -> List[str]:
+    print("triggered import_entries with ", filepath)
     generic_success = '"{"success":true}"'
     try:
         api_responses = [
@@ -149,6 +193,9 @@ def import_entries(
             "\n" + LOG_ERR + " Invalid API key or insufficient permissions.", err=True
         )
         raise typer.Abort()
+    # except requests.exceptions.ConnectionError:
+    #     typer.echo("\n" + LOG_ERR + " Error in connection.", err=True)
+    #     raise typer.Abort()
     errors = [response for response in api_responses if response != generic_success]
     if len(errors) / len(api_responses) > warn_error_tolerance:
         typer.echo(
@@ -158,7 +205,7 @@ def import_entries(
             err=True,
         )
         typer.echo("\n" + LOG_WARN + f" Sample output: {errors[-1]}", err=True)
-    return api_responses
+    return dd.Series(api_responses)
 
 
 def main(
@@ -222,11 +269,13 @@ def main(
         typer.secho(LOG_INFO + " Processing and uploading documents...")
         responses: List[List[str]] = []
         for filepath in filepaths:
-            entries: List[dict] = process_file(filepath)
-            response: List[str] = import_entries(entries, filepath, tsClient)
+            entries: List[dict] = load_file(filepath)
+            response: List[str] = entries.map_partitions(
+                import_entries, filepath, tsClient, meta=(None, "str")
+            ).compute()
             responses.append(response)
 
-        responses = daskClient.persist(responses)
+        # daskClient.compute(responses)
         progress(responses)
         responses = daskClient.gather(responses)
         sleep(2)
