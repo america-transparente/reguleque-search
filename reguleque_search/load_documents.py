@@ -1,3 +1,5 @@
+import json
+from itertools import islice
 import os
 from pathlib import Path
 from time import sleep
@@ -11,7 +13,7 @@ from dask import dataframe as dd
 from dask.distributed import Client, progress
 from tenacity import retry, wait_fixed, stop_after_attempt, retry_if_exception_type
 
-endpoint = "api.reguleque.cl"
+endpoint = "typesense-lb-5f499a3-1218039079.sa-east-1.elb.amazonaws.com"
 collection_name = "revenue_entry"
 in_path = Path("data/in")
 warn_error_tolerance = 0.05
@@ -125,52 +127,8 @@ def load_file(filepath: Path) -> dd.DataFrame:
             # index_col="id",
         )
         .dropna(how="all")
-        .fillna("")
     )
     return entries
-
-def retry(times, exceptions):
-    """
-    Retry Decorator
-    Retries the wrapped function/method `times` times if the exceptions listed
-    in ``exceptions`` are thrown
-    :param times: The number of times to repeat the wrapped function/method
-    :type times: Int
-    :param Exceptions: Lists of exceptions that trigger a retry attempt
-    :type Exceptions: Tuple of Exceptions
-    """
-    def decorator(func):
-        def newfn(*args, **kwargs):
-            attempt = 0
-            while attempt < times:
-                try:
-                    return func(*args, **kwargs)
-                except:
-                    print(
-                        'Exception thrown when attempting to run %s, attempt '
-                        '%d of %d' % (func, attempt, times)
-                    )
-                    sleep(10)
-                    attempt += 1
-            return func(*args, **kwargs)
-        return newfn
-    return decorator
-
-
-# @retry(
-#     wait=wait_fixed(15),
-#     stop=stop_after_attempt(4),
-#     # retry=retry_if_exception_type(requests.exceptions.ConnectionError),
-# )
-@retry(times=4, exceptions=(requests.exceptions.ConnectionError))
-def upload_entries(entries, tsClient, action) -> List[str]:
-    return [
-        response.replace("\\", "")
-        for response in tsClient.collections[collection_name].documents.import_(
-            entries, {"action": action}
-        )
-    ]
-
 
 # @dask.delayed
 def import_entries(
@@ -207,11 +165,24 @@ def import_entries(
         typer.echo("\n" + LOG_WARN + f" Sample output: {errors[-1]}", err=True)
     return dd.Series(api_responses)
 
+def remove_empty_elements(d):
+    """recursively remove empty lists, empty dicts, or None elements from a dictionary"""
+
+    def empty(x):
+        return x is None or x == {} or x == []
+
+    if not isinstance(d, (dict, list)):
+        return d
+    elif isinstance(d, list):
+        return [v for v in (remove_empty_elements(v) for v in d) if not empty(v)]
+    else:
+        return {k: v for k, v in ((k, remove_empty_elements(v)) for k, v in d.items()) if not empty(v)}
+
 
 def main(
     endpoint: str = endpoint,
-    port: int = 443,
-    protocol: str = "https",
+    port: int = 80,
+    protocol: str = "http",
     collection_name: str = collection_name,
     in_path: Path = in_path,
     api_key: str = os.getenv("TYPESENSE_API_KEY"),
@@ -229,6 +200,9 @@ def main(
                     "protocol": protocol,
                 }
             ],
+            "retry_interval_seconds": 15,
+            "connection_timeout_seconds": 90,
+            "num_retries": 10
         }
     )
     typer.echo(LOG_INFO + f" Connected to Typesense at {protocol}://{endpoint}:{port}")
@@ -260,25 +234,54 @@ def main(
             try:
                 tsClient.collections[collection_name].delete()
             except Exception:
-                pass
+                pass 
             # Create collection with the manual schema
             tsClient.collections.create(REVENUE_SCHEMA)
             typer.secho(LOG_INFO + " Created new schema.")
 
         # Load all files
-        typer.secho(LOG_INFO + " Processing and uploading documents...")
+        for filepath in filepaths:
+            name = Path(filepath).name
+            entries: List[dict] = load_file(filepath)
+            intermediate_path = Path(f"data/conversion/{name}")
+            typer.secho(LOG_INFO + f" Converting {name} to JSONL...")
+            dd.DataFrame.to_json(entries, intermediate_path, encoding="utf-8", lines=True)
+        
         responses: List[List[str]] = []
         for filepath in filepaths:
-            entries: List[dict] = load_file(filepath)
-            response: List[str] = entries.map_partitions(
-                import_entries, filepath, tsClient, meta=(None, "str")
-            ).compute()
-            responses.append(response)
+            name = Path(filepath).name
+            chunks = Path(f"data/conversion/{name}").glob("*.part")
+            typer.secho(LOG_INFO + f" Uploading {name} to typesense instance...")
+            for chunk in chunks:
+                typer.secho(LOG_INFO + f" Loading {str(chunk)}")
+                # ## Remove nulls
+                # with open(chunk, "r") as f:
+                #     line = f.readline()
+                    
+                #     while line:
+                #         line = remove_empty_elements(json.loads(line))
+                #         line = f.readline()
 
-        # daskClient.compute(responses)
-        progress(responses)
-        responses = daskClient.gather(responses)
-        sleep(2)
+
+                ## STREAMING
+                with open(chunk, "rb") as f:
+                    requests.post(f"{protocol}://{endpoint}:{port}/collections/{collection_name}/documents/import?action=create", data=f, headers={
+                        "X-TYPESENSE-API_KEY": api_key,
+                        }, timeout=20)
+
+                # ## CHUNKED
+                # with open(chunk) as jsonl_file:
+                #     while True:
+                #         next_n_lines = list(islice(jsonl_file, 2000))
+                #         if not next_n_lines:
+                #             break
+                #         # response: List[str] = tsClient.collections[collection_name].documents.import_(next_n_lines)
+                #         requests.post(f"{protocol}://{endpoint}:{port}/collections/{collection_name}/documents/import?action=create", data="".join(next_n_lines), headers={
+                #             "X-TYPESENSE-API_KEY": api_key,
+                #         }, timeout=10)
+                #     sleep(10)
+                    # responses.append(response)
+
         typer.secho(
             "\n"
             + LOG_INFO
