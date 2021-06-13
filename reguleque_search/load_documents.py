@@ -1,4 +1,5 @@
 import json
+import fileinput
 from itertools import islice
 import os
 from pathlib import Path
@@ -19,7 +20,6 @@ in_path = Path("data/in")
 warn_error_tolerance = 0.05
 
 COLUMNS = [
-    "id",
     "tipo_contrato",
     "path",
     "nombre_organismo",
@@ -128,57 +128,26 @@ def load_file(filepath: Path) -> dd.DataFrame:
         )
         .dropna(how="all")
     )
+    for col in entries:
+        #get dtype for column
+        dt = entries[col].dtype 
+        #check if it is a number
+        if dt == int or dt == float:
+            entries[col] = entries[col].fillna(0)
+        else:
+            entries[col] = entries[col].fillna("")
+
     return entries
 
-# @dask.delayed
-def import_entries(
-    entries: dd.DataFrame, filepath: Path, tsClient, action: str = "create"
-) -> List[str]:
-    # Needed to transform from Int64 (pandas) to native int for     JSON serialization. Int64 was needed to allow NAs
-    # entries["grado_eus"] = entries["grado_eus"].astype(int)
-    entries = entries.to_dict(orient="records")
-    print("triggered import_entries with ", filepath)
-    generic_success = '"{"success":true}"'
-    try:
-        api_responses = [
-            response.replace("\\", "")
-            for response in tsClient.collections[collection_name].documents.import_(
-                entries, {"action": action}
-            )
-        ]
-    except ts.exceptions.RequestUnauthorized:
-        typer.echo(
-            "\n" + LOG_ERR + " Invalid API key or insufficient permissions.", err=True
-        )
-        raise typer.Abort()
-    # except requests.exceptions.ConnectionError:
-    #     typer.echo("\n" + LOG_ERR + " Error in connection.", err=True)
-    #     raise typer.Abort()
-    errors = [response for response in api_responses if response != generic_success]
-    if len(errors) / len(api_responses) > warn_error_tolerance:
-        typer.echo(
-            "\n"
-            + LOG_WARN
-            + f" Found problem with {len(errors)}/{len(api_responses)} files while uploading {filepath.as_posix()}",
-            err=True,
-        )
-        typer.echo("\n" + LOG_WARN + f" Sample output: {errors[-1]}", err=True)
-    return dd.Series(api_responses)
-
-def remove_empty_elements(d):
-    """recursively remove empty lists, empty dicts, or None elements from a dictionary"""
-
-    def empty(x):
-        return x is None or x == {} or x == []
-
-    if not isinstance(d, (dict, list)):
-        return d
-    elif isinstance(d, list):
-        return [v for v in (remove_empty_elements(v) for v in d) if not empty(v)]
-    else:
-        return {k: v for k, v in ((k, remove_empty_elements(v)) for k, v in d.items()) if not empty(v)}
-
-
+def import_chunk(f, api_key, endpoint, port=443, protocol="https"):
+    return requests.post(f"{protocol}://{endpoint}:{port}/collections/{collection_name}/documents/import?action=create", data=f, headers={
+                        "X-TYPESENSE-API-KEY": api_key,
+                        }, stream=True)
+@retry(stop=stop_after_attempt(4), wait=wait_fixed(2))
+def import_lines(lines, api_key, endpoint, port=443, protocol="https"):
+    return requests.post(f"{protocol}://{endpoint}:{port}/collections/{collection_name}/documents/import?action=create", data="".join(lines), headers={
+                            "X-TYPESENSE-API-KEY": api_key,
+                        })
 def main(
     endpoint: str = endpoint,
     port: int = 80,
@@ -247,46 +216,39 @@ def main(
             typer.secho(LOG_INFO + f" Converting {name} to JSONL...")
             dd.DataFrame.to_json(entries, intermediate_path, encoding="utf-8", lines=True)
         
-        responses: List[List[str]] = []
-        for filepath in filepaths:
-            name = Path(filepath).name
-            chunks = Path(f"data/conversion/{name}").glob("*.part")
-            typer.secho(LOG_INFO + f" Uploading {name} to typesense instance...")
-            for chunk in chunks:
-                typer.secho(LOG_INFO + f" Loading {str(chunk)}")
-                # ## Remove nulls
-                # with open(chunk, "r") as f:
-                #     line = f.readline()
-                    
-                #     while line:
-                #         line = remove_empty_elements(json.loads(line))
-                #         line = f.readline()
+        # responses: List[List[str]] = []
+        # typer.secho(LOG_INFO + f" Uploading {name} to typesense instance...")
+        # for filepath in filepaths:
+        #     name = Path(filepath).name
+        #     chunks = Path(f"data/conversion/{name}").glob("*.part")
+        #     for chunk in chunks:
+        #         ## STREAMING
+        #         responses = []
+        #         # with open(chunk, "rb") as f:
+        #         #     response = import_chunk(f, api_key, endpoint, port=port, protocol=protocol)
+        #         #     responses.append(response)
+        #         # typer.secho(LOG_INFO + f" Chunks uploaded, results: {responses}")
 
+        #         ## CHUNKED
+        #         with open(chunk) as jsonl_file:
+        #             i = 0
+        #             while True:
+        #                 print(f"chunk {i}")
+        #                 next_n_lines = list(islice(jsonl_file, 2000))
+        #                 if not next_n_lines:
+        #                     break
+        #                 i += 1
+        #                 print("pre")
+        #                 # response: List[str] = tsClient.collections[collection_name].documents.import_(next_n_lines)
+        #                 response = import_lines(next_n_lines, api_key, endpoint, port=port, protocol=protocol)
+        #             # sleep(10)
+        #             responses.append(response)
 
-                ## STREAMING
-                with open(chunk, "rb") as f:
-                    requests.post(f"{protocol}://{endpoint}:{port}/collections/{collection_name}/documents/import?action=create", data=f, headers={
-                        "X-TYPESENSE-API_KEY": api_key,
-                        }, timeout=20)
-
-                # ## CHUNKED
-                # with open(chunk) as jsonl_file:
-                #     while True:
-                #         next_n_lines = list(islice(jsonl_file, 2000))
-                #         if not next_n_lines:
-                #             break
-                #         # response: List[str] = tsClient.collections[collection_name].documents.import_(next_n_lines)
-                #         requests.post(f"{protocol}://{endpoint}:{port}/collections/{collection_name}/documents/import?action=create", data="".join(next_n_lines), headers={
-                #             "X-TYPESENSE-API_KEY": api_key,
-                #         }, timeout=10)
-                #     sleep(10)
-                    # responses.append(response)
-
-        typer.secho(
-            "\n"
-            + LOG_INFO
-            + f" Finished processing and uploading {len(filepaths)} documents."
-        )
+        # typer.secho(
+        #     "\n"
+        #     + LOG_INFO
+        #     + f" Finished processing and uploading {len(filepaths)} documents."
+        # )
     except ts.exceptions.RequestUnauthorized:
         typer.echo(LOG_ERR + " Invalid API key or insufficient permissions.", err=True)
         raise typer.Abort()
