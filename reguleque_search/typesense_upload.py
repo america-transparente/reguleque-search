@@ -1,13 +1,14 @@
 import os
-from typing import List
-from art import tprint
-import typesense as ts
-import pandas as pd
-import dask
-from dask.distributed import Client, progress
 from pathlib import Path
-import typer
 from time import sleep
+from typing import List
+
+import dask
+import pandas as pd
+import typer
+import typesense as ts
+from art import tprint
+from dask.distributed import Client, progress
 
 endpoint = "api.reguleque.cl"
 collection_name = "revenue_entry"
@@ -131,7 +132,8 @@ def process_file(filepath: Path) -> List[dict]:
             .dropna(axis=0, how="all")
             .fillna("")
         )
-    # Needed to transform from Int64 (pandas) to native int for     JSON serialization. Int64 was needed to allow NAs
+    # Needed to transform from Int64 (pandas) to native int for JSON serialization.
+    # Int64 was needed to allow NAs
     entries["grado_eus"] = entries["grado_eus"].astype(int)
     entries = entries.to_dict(orient="records")
     return entries
