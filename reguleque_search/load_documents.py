@@ -1,10 +1,9 @@
-import json
-import fileinput
-from itertools import islice
 import os
 from pathlib import Path
 from time import sleep
 from typing import List
+from tqdm import tqdm
+from tqdm.utils import CallbackIOWrapper
 
 import requests
 import typer
@@ -12,16 +11,16 @@ import typesense as ts
 from art import tprint
 from dask import dataframe as dd
 from dask.distributed import Client, progress
-from tenacity import retry, wait_fixed, stop_after_attempt, retry_if_exception_type
+from tenacity import retry, wait_fixed, stop_after_attempt, retry_if_result, retry_if_exception_type, RetryError
 
-endpoint = "typesense-lb-5f499a3-1218039079.sa-east-1.elb.amazonaws.com"
+endpoint = "0.0.0.0"
 collection_name = "revenue_entry"
 in_path = Path("data/in")
 warn_error_tolerance = 0.05
 
 COLUMNS = [
+    "id",
     "tipo_contrato",
-    "path",
     "nombre_organismo",
     "código_organismo",
     "fecha_publicación",
@@ -39,6 +38,29 @@ COLUMNS = [
     "horas_diurnas",
     "horas_nocturnas",
     "horas_festivas",
+    "fecha_ingreso",
+    "fecha_término",
+    "observaciones",
+    "enlace",
+    "viáticos",
+]
+
+HONORARIOS_COLUMNS = [
+    "id",
+    "tipo_contrato",
+    "nombre_organismo",
+    "código_organismo",
+    "fecha_publicación",
+    "año",
+    "mes",
+    "nombre",
+    "tipo_calificación_profesional",
+    "tipo_cargo",
+    "región",
+    "unidad_monetaria",
+    "remuneración_bruta_mensual",
+    "remuneración_líquida_mensual",
+    "pago_mensual",
     "fecha_ingreso",
     "fecha_término",
     "observaciones",
@@ -71,6 +93,7 @@ COLUMN_TYPES = {
     "observaciones": str,
     "enlace": str,
     "viáticos": str,
+    "pago_mensual": str
 }
 
 REVENUE_SCHEMA = {
@@ -80,28 +103,29 @@ REVENUE_SCHEMA = {
         {"name": "nombre", "type": "string"},
         {"name": "tipo_contrato", "type": "string", "facet": True},
         {"name": "nombre_organismo", "type": "string", "facet": True},
-        {"name": "código_organismo", "type": "string"},
+        {"name": "código_organismo", "type": "string", "optional": True},
         {"name": "fecha_publicación", "type": "string"},
         {"name": "año", "type": "string", "facet": True},
         {"name": "mes", "type": "string", "facet": True},
-        {"name": "tipo_estamento", "type": "string", "facet": True},
-        {"name": "tipo_cargo", "type": "string"},
-        {"name": "tipo_calificación_profesional", "type": "string"},
-        {"name": "región", "type": "string", "facet": True},
-        {"name": "asignaciones", "type": "string"},
+        {"name": "tipo_estamento", "type": "string", "facet": True, "optional": True},
+        {"name": "tipo_cargo", "type": "string", "optional": True},
+        {"name": "tipo_calificación_profesional", "type": "string", "optional": True},
+        {"name": "región", "type": "string", "facet": True, "optional": True},
+        {"name": "asignaciones", "type": "string", "optional": True},
         {"name": "unidad_monetaria", "type": "string"},
         {"name": "remuneración_bruta_mensual", "type": "float"},
-        {"name": "remuneración_líquida_mensual", "type": "float"},
-        {"name": "horas_diurnas", "type": "string"},
-        {"name": "horas_nocturnas", "type": "string"},
-        {"name": "horas_festivas", "type": "string"},
-        {"name": "fecha_ingreso", "type": "string"},
-        {"name": "fecha_término", "type": "string"},
-        {"name": "observaciones", "type": "string"},
-        {"name": "enlace", "type": "string"},
-        {"name": "viáticos", "type": "string"},
+        {"name": "remuneración_líquida_mensual", "type": "float", "optional": True},
+        {"name": "horas_diurnas", "type": "string", "optional": True},
+        {"name": "horas_nocturnas", "type": "string", "optional": True},
+        {"name": "horas_festivas", "type": "string", "optional": True},
+        {"name": "pago_mensual", "type": "string", "optional": True},
+        {"name": "fecha_ingreso", "type": "string", "optional": True},
+        {"name": "fecha_término", "type": "string", "optional": True},
+        {"name": "observaciones", "type": "string", "optional": True},
+        {"name": "enlace", "type": "string", "optional": True},
+        {"name": "viáticos", "type": "string", "optional": True},
     ],
-    "default_sorting_field": "remuneración_líquida_mensual",
+    "default_sorting_field": "remuneración_bruta_mensual",
 }
 
 LOG_INFO = typer.style("[INFO]", fg=typer.colors.GREEN, bold=True)
@@ -112,17 +136,17 @@ LOG_PROMPT = typer.style("[PROMPT]", fg=typer.colors.WHITE, bold=True)
 
 # @dask.delayed
 def load_file(filepath: Path) -> dd.DataFrame:
+    columns = HONORARIOS_COLUMNS if "honorarios" in str(filepath) else COLUMNS
     entries = (
         dd.read_csv(
             filepath,
             sep=";",
-            names=COLUMNS,
+            names=columns,
             dtype=COLUMN_TYPES,
             header=None,
             skip_blank_lines=True,
             na_filter=True,
             na_values="Indefinido",
-            # dayfirst=True,
             encoding="ISO-8859-1",
             # index_col="id",
         )
@@ -139,15 +163,20 @@ def load_file(filepath: Path) -> dd.DataFrame:
 
     return entries
 
-def import_chunk(f, api_key, endpoint, port=443, protocol="https"):
-    return requests.post(f"{protocol}://{endpoint}:{port}/collections/{collection_name}/documents/import?action=create", data=f, headers={
-                        "X-TYPESENSE-API-KEY": api_key,
-                        }, stream=True)
-@retry(stop=stop_after_attempt(4), wait=wait_fixed(2))
-def import_lines(lines, api_key, endpoint, port=443, protocol="https"):
-    return requests.post(f"{protocol}://{endpoint}:{port}/collections/{collection_name}/documents/import?action=create", data="".join(lines), headers={
+def non_200(r):
+    return r.status_code != 200
+
+@retry(retry=retry_if_result(non_200) | retry_if_exception_type(requests.exceptions.ConnectionError), stop=stop_after_attempt(2), wait=wait_fixed(3), reraise=True)
+def import_chunk(chunk, api_key, endpoint, session, port=443, protocol="https"):
+    file_size = os.stat(chunk).st_size
+    with open(chunk, "rb") as f:
+        with tqdm(total=file_size, unit="B", unit_scale=True, unit_divisor=1024) as t:
+            wrapped_file = CallbackIOWrapper(t.update, f, "read")
+            return session.post(f"{protocol}://{endpoint}:{port}/collections/{collection_name}/documents/import?action=upsert", data=wrapped_file, headers={
                             "X-TYPESENSE-API-KEY": api_key,
-                        })
+                            }, stream=True)
+                        
+
 def main(
     endpoint: str = endpoint,
     port: int = 80,
@@ -156,6 +185,7 @@ def main(
     in_path: Path = in_path,
     api_key: str = os.getenv("TYPESENSE_API_KEY"),
     drop: bool = False,
+    skip_conversion: bool = False
 ):
     tprint("Reguleque")
     tsClient = ts.Client(
@@ -174,7 +204,7 @@ def main(
             "num_retries": 10
         }
     )
-    typer.echo(LOG_INFO + f" Connected to Typesense at {protocol}://{endpoint}:{port}")
+    typer.echo(LOG_INFO + f" Connection to Typesense at {protocol}://{endpoint}:{port}")
 
     daskClient = Client()
     typer.echo(
@@ -209,46 +239,45 @@ def main(
             typer.secho(LOG_INFO + " Created new schema.")
 
         # Load all files
+        if not skip_conversion:
+            for filepath in filepaths:
+                name = Path(filepath).name
+                entries: List[dict] = load_file(filepath)
+                intermediate_path = Path(f"data/conversion/{name}")
+                typer.secho(LOG_INFO + f" Converting {name} to JSONL...")
+                if "honorarios" in name:
+                    typer.secho(LOG_INFO + f" Honorarios detected, special column schema enabled.")
+                dd.DataFrame.to_json(entries, intermediate_path, encoding="utf-8", lines=True)
+        
+        session = requests.Session()
         for filepath in filepaths:
             name = Path(filepath).name
-            entries: List[dict] = load_file(filepath)
-            intermediate_path = Path(f"data/conversion/{name}")
-            typer.secho(LOG_INFO + f" Converting {name} to JSONL...")
-            dd.DataFrame.to_json(entries, intermediate_path, encoding="utf-8", lines=True)
-        
-        # responses: List[List[str]] = []
-        # typer.secho(LOG_INFO + f" Uploading {name} to typesense instance...")
-        # for filepath in filepaths:
-        #     name = Path(filepath).name
-        #     chunks = Path(f"data/conversion/{name}").glob("*.part")
-        #     for chunk in chunks:
-        #         ## STREAMING
-        #         responses = []
-        #         # with open(chunk, "rb") as f:
-        #         #     response = import_chunk(f, api_key, endpoint, port=port, protocol=protocol)
-        #         #     responses.append(response)
-        #         # typer.secho(LOG_INFO + f" Chunks uploaded, results: {responses}")
+            typer.secho(LOG_INFO + f" Uploading {name} to typesense instance...")
+            name = Path(filepath).name
+            chunks = list(Path(f"data/conversion/{name}").glob("*.part"))
+            typer.secho(LOG_INFO + f" Using {len(chunks)} chunks...")
+            for chunk in chunks:
+                try:
+                    response = import_chunk(chunk, api_key, endpoint, session, port=port, protocol=protocol)
+                except requests.exceptions.ConnectionError as e:
+                    typer.echo(LOG_ERR + f" Couldn't establish connection after repeated requests:", err=True)
+                    print("   ", e)
+                    raise typer.Abort()
+                    
+                if response.status_code != 200:
+                    typer.echo(LOG_ERR + f" Got response code {response.status_code}, with:", err=True)
+                    print(response.text)
+                    raise typer.Abort()
 
-        #         ## CHUNKED
-        #         with open(chunk) as jsonl_file:
-        #             i = 0
-        #             while True:
-        #                 print(f"chunk {i}")
-        #                 next_n_lines = list(islice(jsonl_file, 2000))
-        #                 if not next_n_lines:
-        #                     break
-        #                 i += 1
-        #                 print("pre")
-        #                 # response: List[str] = tsClient.collections[collection_name].documents.import_(next_n_lines)
-        #                 response = import_lines(next_n_lines, api_key, endpoint, port=port, protocol=protocol)
-        #             # sleep(10)
-        #             responses.append(response)
+                entries = response.text.split("\n")
+                errors = [line for line in entries if line != "{\"success\":true}"]
+                error_ratio = len(errors)/len(entries)
+                if error_ratio >= warn_error_tolerance:
+                    typer.echo(LOG_WARN + f" {round(error_ratio * 100, 1)}% of entries had errors. Sample:", err=True)
+                    print(errors[1])
+                
+            typer.secho(LOG_INFO + f" All chunks uploaded.")
 
-        # typer.secho(
-        #     "\n"
-        #     + LOG_INFO
-        #     + f" Finished processing and uploading {len(filepaths)} documents."
-        # )
     except ts.exceptions.RequestUnauthorized:
         typer.echo(LOG_ERR + " Invalid API key or insufficient permissions.", err=True)
         raise typer.Abort()

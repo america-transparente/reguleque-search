@@ -133,3 +133,4 @@ data/out/
 dask-worker-space/
 data/in/TA_PersonalContrata_0.csv
 data/conversion/*
+data/*
