@@ -166,8 +166,8 @@ def main(
     collection_name: str = collection_name,
     in_path: Path = in_path,
     api_key: Union[str, None] = os.getenv("MEILISEARCH_API_KEY") or None,
-    drop: bool = True,
-    skip_conversion: bool = True,
+    drop: bool = False,
+    skip_conversion: bool = False,
 ):
     tprint("Reguleque")
     if api_key:
