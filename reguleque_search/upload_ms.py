@@ -220,6 +220,8 @@ def main(
                 "primaryKey": "id"
             }
         )
+        msClient.index(collection_name).update_sortable_attributes(["remuneración_líquida_mensual", "remuneración_bruta_mensual", "grado_eus"])
+        msClient.index(collection_name).update_filterable_attributes(["año", "mes", "nombre_organismo", "tipo_contrato"])
         typer.secho(LOG_INFO + " Created new schema.")
 
     # Load all files
