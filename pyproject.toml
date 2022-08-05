@@ -8,7 +8,7 @@ version = "0.1.0"
 python = "^3.8"
 typesense = "^0.11.0"
 bokeh = "^2.3.2"
-dask = {extras = ["distributed", "dataframe"], version = "^2021.5.1"}
+dask = {extras = ["distributed", "dataframe"], version = "^2022.5.2"}
 typer = "^0.3.2"
 colorama = "^0.4.4"
 art = "^5.2"
