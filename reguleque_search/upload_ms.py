@@ -1,7 +1,6 @@
 import os
 from pathlib import Path
-from tkinter import NONE
-from typing import List, Union
+from typing import Union
 
 import meilisearch as ms
 import requests
