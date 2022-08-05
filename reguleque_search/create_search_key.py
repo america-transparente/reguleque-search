@@ -4,7 +4,7 @@ import typesense as ts
 client = ts.Client(
     {
         "api_key": os.getenv("TYPESENSE_API_KEY") or input("TypeSense Admin API Key: "),
-        "nodes": [{"host": "api.reguleque.cl", "port": "443", "protocol": "https"}],
+        "nodes": [{"host": "0.0.0.0", "port": "80", "protocol": "http"}],
     }
 )
 

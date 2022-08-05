@@ -12,6 +12,9 @@ dask = {extras = ["distributed", "dataframe"], version = "^2022.5.2"}
 typer = "^0.3.2"
 colorama = "^0.4.4"
 art = "^5.2"
+tqdm = "^4.64.0"
+meilisearch = "^0.18.3"
+tenacity = "^8.0.1"
 
 [tool.poetry.dev-dependencies]
 black = "^21.4b2"
