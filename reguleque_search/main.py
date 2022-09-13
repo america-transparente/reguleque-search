@@ -175,6 +175,10 @@ def main(
     typer.secho(LOG_INFO + f" All chunks uploaded.")
 
     typer.echo(LOG_INFO + " Waiting for all chunks to be processed...")
+    # Print tasks
+    typer.echo(LOG_INFO + " Tasks:")
+    typer.echo(LOG_INFO + f"   {tasks.join(', ')}")
+
     with tqdm(total=len(tasks)) as t:
         while tasks:
             for task in tasks:
