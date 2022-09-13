@@ -59,6 +59,7 @@ def import_chunk(
 
 def main(
     in_path: Path,
+    intermediate_path: Path = Path("data/conversion/"),
     endpoint: str = endpoint,
     port: int = 7700,
     protocol: str = "http",
@@ -132,9 +133,9 @@ def main(
         for filepath in filepaths:
             name = Path(filepath).name
             entries: DataFrame = load_file(filepath)
-            intermediate_path = Path(f"data/conversion/{name}")
+            output_path = intermediate_path / name
             typer.secho(LOG_INFO + f" Converting {name} to JSONL...")
-            DataFrame.to_json(entries, intermediate_path, encoding="utf-8", lines=True)
+            DataFrame.to_json(entries, output_path, encoding="utf-8", lines=True)
 
     session = requests.Session()
     for filepath in filepaths:
