@@ -20,6 +20,7 @@ tenacity = "^8.0.1"
 black = "^21.4b2"
 flake8 = "^3.9.1"
 graphviz = "^0.16"
+ipykernel = "^6.15.2"
 
 [build-system]
 build-backend = "poetry.masonry.api"
