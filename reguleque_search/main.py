@@ -142,7 +142,7 @@ def main(
         name = Path(filepath).name
         typer.secho(LOG_INFO + f" Uploading {name} to MeiliSearch instance...")
         name = Path(filepath).name
-        chunks = list(Path(f"data/conversion/{name}").glob("*.part"))
+        chunks = list((intermediate_path / name).glob("*.part"))
         typer.secho(LOG_INFO + f" Using {len(chunks)} chunks...")
 
         tasks = []
