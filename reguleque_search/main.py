@@ -143,6 +143,7 @@ def main(
         typer.secho(LOG_INFO + f" Uploading {name} to MeiliSearch instance...")
         name = Path(filepath).name
         chunks = list((intermediate_path / name).glob("*.part"))
+
         typer.secho(LOG_INFO + f" Using {len(chunks)} chunks...")
 
         tasks = []
@@ -172,24 +173,24 @@ def main(
             tasks.append(response["taskUid"])
             typer.echo(LOG_INFO + f" Uploaded chunk {chunk.name}.")
 
-        typer.secho(LOG_INFO + f" All chunks uploaded.")
+    typer.secho(LOG_INFO + f" All chunks uploaded.")
 
-        typer.echo(LOG_INFO + " Waiting for all chunks to be processed...")
-        with tqdm(total=len(tasks)) as t:
-            while tasks:
-                for task in tasks:
-                    taskResponse = msClient.get_task(task)
-                    if taskResponse["status"] == "succeeded":
-                        t.update(1)
-                        tasks.remove(task)
-                    elif taskResponse["status"] == "failed":
-                        typer.echo(
-                            LOG_ERR + f" Task {task} failed with:", err=True
-                        )
-                        print(f"   {taskResponse['error']['message']}")
-                        tasks.remove(task)
+    typer.echo(LOG_INFO + " Waiting for all chunks to be processed...")
+    with tqdm(total=len(tasks)) as t:
+        while tasks:
+            for task in tasks:
+                taskResponse = msClient.get_task(task)
+                if taskResponse["status"] == "succeeded":
+                    t.update(1)
+                    tasks.remove(task)
+                elif taskResponse["status"] == "failed":
+                    typer.echo(
+                        LOG_ERR + f" Task {task} failed with:", err=True
+                    )
+                    print(f"   {taskResponse['error']['message']}")
+                    tasks.remove(task)
 
-                time.sleep(2)
+            time.sleep(2)
 
 
 
