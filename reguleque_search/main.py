@@ -1,12 +1,13 @@
 import os
+import time
 from pathlib import Path
 from typing import Union
 
 import meilisearch as ms
 import requests
 import typer
-
 from art import tprint
+from dask.dataframe.core import DataFrame
 from distributed.client import Client
 from tenacity import retry
 from tenacity.retry import retry_if_exception_type, retry_if_result
@@ -14,9 +15,8 @@ from tenacity.stop import stop_after_attempt
 from tenacity.wait import wait_fixed
 from tqdm import tqdm
 from tqdm.utils import CallbackIOWrapper
-from dask.dataframe.core import DataFrame
 
-from reguleque_search.load import load_file
+from load import load_file
 
 endpoint = "0.0.0.0"
 collection_name = "reguleque"
@@ -39,7 +39,9 @@ def non_ok(r):
     wait=wait_fixed(3),
     reraise=True,
 )
-def import_chunk(chunk, api_key, endpoint, session, port=443, protocol="https"):
+def import_chunk(
+    chunk, api_key, endpoint, session, port=443, protocol="https"
+) -> requests.Response:
     file_size = os.stat(chunk).st_size
     with open(chunk, "rb") as f:
         with tqdm(total=file_size, unit="B", unit_scale=True, unit_divisor=1024) as t:
@@ -132,19 +134,17 @@ def main(
             entries: DataFrame = load_file(filepath)
             intermediate_path = Path(f"data/conversion/{name}")
             typer.secho(LOG_INFO + f" Converting {name} to JSONL...")
-            if "honorarios" in name:
-                typer.secho(
-                    LOG_INFO + f" Honorarios detected, special column schema enabled."
-                )
             DataFrame.to_json(entries, intermediate_path, encoding="utf-8", lines=True)
 
     session = requests.Session()
     for filepath in filepaths:
         name = Path(filepath).name
-        typer.secho(LOG_INFO + f" Uploading {name} to typesense instance...")
+        typer.secho(LOG_INFO + f" Uploading {name} to MeiliSearch instance...")
         name = Path(filepath).name
         chunks = list(Path(f"data/conversion/{name}").glob("*.part"))
         typer.secho(LOG_INFO + f" Using {len(chunks)} chunks...")
+
+        tasks = []
 
         for chunk in chunks:
             try:
@@ -167,7 +167,29 @@ def main(
                 )
                 print(response.text)
 
+            response = response.json()
+            tasks.append(response["taskUid"])
+            typer.echo(LOG_INFO + f" Uploaded chunk {chunk.name}.")
+
         typer.secho(LOG_INFO + f" All chunks uploaded.")
+
+        typer.echo(LOG_INFO + " Waiting for all chunks to be processed...")
+        with tqdm(total=len(tasks)) as t:
+            while tasks:
+                for task in tasks:
+                    taskResponse = msClient.get_task(task)
+                    if taskResponse["status"] == "succeeded":
+                        t.update(1)
+                        tasks.remove(task)
+                    elif taskResponse["status"] == "failed":
+                        typer.echo(
+                            LOG_ERR + f" Task {task} failed with:", err=True
+                        )
+                        print(f"   {taskResponse['error']['message']}")
+                        tasks.remove(task)
+
+                time.sleep(2)
+
 
 
 if __name__ == "__main__":

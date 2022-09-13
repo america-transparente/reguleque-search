@@ -6,20 +6,17 @@ version = "0.1.0"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-typesense = "^0.11.0"
-bokeh = "^2.3.2"
-dask = {extras = ["distributed", "dataframe"], version = "^2022.5.2"}
+dask = {extras = ["distributed", "dataframe"], version = "^2022.8.0"}
 typer = "^0.3.2"
 colorama = "^0.4.4"
 art = "^5.2"
-tqdm = "^4.64.0"
-meilisearch = "^0.18.3"
+tqdm = "^4.64.1"
+meilisearch = "^0.19.1"
 tenacity = "^8.0.1"
 
 [tool.poetry.dev-dependencies]
 black = "^21.4b2"
 flake8 = "^3.9.1"
-graphviz = "^0.16"
 ipykernel = "^6.15.2"
 
 [build-system]

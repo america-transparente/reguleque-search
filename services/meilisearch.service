@@ -1,0 +1,14 @@
+[Unit]
+Description=Meilisearch
+After=systemd-user-sessions.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/meilisearch --http-addr 127.0.0.1:7700 --env production --http-payload-size-limit 2Gb --max-index-size 200Gb --enable-auto-batching --max-indexing-threads 8 --debounce-duration-sec 5 --max-documents-per-batch 50000 --master-key="FILL_MASTER_KEY_HERE"
+Restart=always
+WorkingDirectory=/data/meilisearch
+LimitNOFILE=65536
+
+[Install]
+WantedBy=default.target
