@@ -138,6 +138,7 @@ def main(
             DataFrame.to_json(entries, output_path, encoding="utf-8", lines=True)
 
     session = requests.Session()
+    tasks = []
     for filepath in filepaths:
         name = Path(filepath).name
         typer.secho(LOG_INFO + f" Uploading {name} to MeiliSearch instance...")
@@ -145,8 +146,6 @@ def main(
         chunks = list((intermediate_path / name).glob("*.part"))
 
         typer.secho(LOG_INFO + f" Using {len(chunks)} chunks...")
-
-        tasks = []
 
         for chunk in chunks:
             try:
