@@ -13,6 +13,7 @@ art = "^5.2"
 tqdm = "^4.64.1"
 meilisearch = "^0.19.1"
 tenacity = "^8.0.1"
+bokeh = "^2.4.3"
 
 [tool.poetry.dev-dependencies]
 black = "^21.4b2"
